@@ -10,6 +10,7 @@ adc.json
 backend-fastapi/tools/
 test_images/
 backend-fastapi/data/raw/
+backend-fastapi/data/rule_images/
 
 # 파이썬
 __pycache__/

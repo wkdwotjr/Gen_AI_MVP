@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.7         # 01_API_SPEC.md §4
     search_radius_m: int = 300                # 서버 고정값. 클라이언트가 정하지 않는다
 
+    # ── F-04 RAG — 02_DB_SCHEMA.md §8
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dim: int = 768
+    rag_top_k: int = 3
+    rag_similarity_threshold: float = 0.6     # 미만이면 "확인된 정보 없음"
+
+    # ── F-03 브리핑 — 01_API_SPEC.md §5
+    briefing_timeout_s: float = 10.0          # 초과·실패 시 TEMPLATE 폴백
+
     # 바코드 해시 salt. 해시는 중복 판정 전용이며 복호화되지 않는다.
     # 값이 바뀌면 기존 해시와 매칭되지 않으므로 배포 후에는 고정한다.
     barcode_salt: str = "couponkok-dev-salt"
@@ -753,3 +762,58 @@ async def get_last_location(uid: str) -> dict[str, Any] | None:
 async def update_last_location(uid: str, lat: float, lng: float) -> None:
     """이력이 아니라 최신 1건만 덮어쓴다 — 02_DB_SCHEMA.md §0.2의 의도적 축소."""
     await asyncio.to_thread(_update_location_sync, uid, lat, lng)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 8. RAG 규칙 검색 (F-04) — 02_DB_SCHEMA.md §8.5
+#    ① brand_id/store_type SQL 사전 필터 → ② 코사인 거리 벡터 검색 (LIMIT top_k)
+#    ③ 유사도 임계값 컷은 여기서 하지 않고 호출부(app/services/gemini.py)에서
+#       한다 — "찾았는데 못 미쳐서 버림"과 "애초에 후보가 없음"을 로그에서
+#       구분하기 위해서다.
+# ══════════════════════════════════════════════════════════════════
+def _vec_literal(vec: list[float]) -> str:
+    """pgvector는 '[0.1,0.2,...]' 형식의 텍스트를 vector로 캐스트한다.
+
+    pgvector-python 패키지를 추가하지 않기 위한 선택이다 (4일 스프린트,
+    이미 원시 SQL 스타일을 쓰고 있어 의존성을 하나 더 늘릴 이유가 없다).
+    """
+    return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+
+
+_SQL_RULES_SEARCH = text(
+    """
+    SELECT rule_id, content, rule_type, source_name, source_url, verified_by,
+           1 - (embedding <=> CAST(:qvec AS vector)) AS similarity
+    FROM coupon_rules
+    WHERE brand_id IN (:brand_id, '_common')
+      AND store_type IN (:store_type, 'NORMAL')
+    ORDER BY embedding <=> CAST(:qvec AS vector)
+    LIMIT :limit
+    """
+)
+
+
+def _search_rules_sync(
+    brand_id: str, store_type: str, qvec: list[float], limit: int
+) -> list[dict[str, Any]]:
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            _SQL_RULES_SEARCH,
+            {
+                "brand_id": brand_id,
+                "store_type": store_type,
+                "qvec": _vec_literal(qvec),
+                "limit": limit,
+            },
+        ).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+async def search_rules(
+    brand_id: str, store_type: str, qvec: list[float], limit: int | None = None
+) -> list[dict[str, Any]]:
+    """brand_id(+_common) × store_type(+NORMAL)로 좁힌 뒤 코사인 거리순 top_k."""
+    settings = get_settings()
+    return await asyncio.to_thread(
+        _search_rules_sync, brand_id, store_type, qvec, limit or settings.rag_top_k
+    )

@@ -10,10 +10,11 @@
 - 직전 좌표가 필요한 필터(50m 중복 억제·속도 이상치)는 `users.last_location`
   **1건을 기준으로만** 판정한다.
 
-브리핑(F-03)은 아직 Gemini를 붙이지 않았다. 지금은 `generated_by="TEMPLATE"`
-폴백 문장을 파이썬이 만든다. 이 폴백은 F-03 완성 후에도 LLM 호출 실패 시
-경로로 그대로 남는다(§5 규정).
+브리핑(F-03)은 매장별로 F-04 RAG 검색(`rag_rules_for`) → Gemini 문장 생성
+(`build_briefing`)을 거친다. 검색·생성 어느 쪽이 실패해도 `template_briefing()`
+폴백으로 떨어진다 — LLM 호출 실패 시 경로는 §5 규정대로 유지한다.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone
 from math import asin, cos, radians, sin, sqrt
@@ -23,6 +24,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app import core
+from app.services import gemini
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/locations", tags=["locations"])
@@ -154,6 +156,68 @@ def template_briefing(match: dict[str, Any]) -> Briefing:
 
 
 # ══════════════════════════════════════════════════════════════════
+# F-04 RAG 검색 + F-03 Gemini 브리핑 생성 — 01_API_SPEC.md §8 전체 흐름
+# ══════════════════════════════════════════════════════════════════
+# 매칭된 모든 매장에 같은 질의문을 쓴다. 요청마다 매장별로 다른 문장을 지어
+# 임베딩하면 호출 수만 늘고, 브랜드/매장유형 필터(§8.5 ①)가 실질적인 검색
+# 좁히기를 이미 담당하므로 질의문 자체를 다양화할 이유가 없다.
+RAG_QUERY = "이 매장에서 이 쿠폰을 사용할 수 있나요? 사용이 제한되는 조건이 있나요?"
+_rag_query_vec: list[float] | None = None
+
+
+async def _get_rag_query_vec() -> list[float]:
+    """고정 질의문의 임베딩을 프로세스 생애주기 동안 1회만 계산해 재사용한다."""
+    global _rag_query_vec
+    if _rag_query_vec is None:
+        _rag_query_vec = await gemini.embed_text(RAG_QUERY, is_query=True)
+    return _rag_query_vec
+
+
+async def rag_rules_for(brand_id: str, store_type: str) -> list[dict[str, Any]]:
+    """brand_id(+_common) × store_type(+NORMAL) 사전 필터 → 코사인 유사도 top_k.
+
+    임계값(0.6) 미만인 규칙은 여기서 걸러낸다 — 02_DB_SCHEMA.md §8.6.
+    검색 자체가 실패하면(임베딩 장애 등) 빈 목록으로 처리한다. "규칙을 못 찾음"과
+    "검색이 실패함"을 사용자에게는 같은 결과("확인된 정보 없음")로 보여준다 —
+    실패를 "사용 가능"으로 오인시키는 것보다 훨씬 안전하다.
+    """
+    try:
+        qvec = await _get_rag_query_vec()
+        rows = await core.search_rules(brand_id, store_type, qvec)
+    except gemini.GeminiUnavailable as exc:
+        logger.warning("RAG 검색 실패, 규칙 없이 진행: %s", exc)
+        return []
+    threshold = core.get_settings().rag_similarity_threshold
+    return [r for r in rows if float(r["similarity"]) >= threshold]
+
+
+async def build_briefing(match: dict[str, Any]) -> Briefing:
+    """규칙 검색(F-04) → Gemini 브리핑 생성(F-03). 실패 시 TEMPLATE로 폴백한다.
+
+    폴백이어도 검색된 규칙(rules)은 그대로 응답에 싣는다 — 문장은 Gemini가
+    아니어도, 근거 자체는 RAG가 이미 찾아낸 사실이기 때문이다.
+    """
+    rules = await rag_rules_for(match["brand_id"], match["store_type"])
+    briefing_rules = [
+        BriefingRule(
+            rule_id=r["rule_id"],
+            content=r["content"],
+            source_name=r["source_name"],
+            similarity=round(float(r["similarity"]), 4),
+        )
+        for r in rules
+    ]
+    try:
+        text = await gemini.generate_briefing_text(match, rules)
+        return Briefing(text=text, generated_by="GEMINI", rules=briefing_rules)
+    except (gemini.GeminiUnavailable, gemini.GeminiParseError) as exc:
+        logger.info("브리핑 생성 실패, TEMPLATE 폴백 (%s): %s", match["store_id"], exc)
+        fallback = template_briefing(match)
+        fallback.rules = briefing_rules
+        return fallback
+
+
+# ══════════════════════════════════════════════════════════════════
 # 엔드포인트
 # ══════════════════════════════════════════════════════════════════
 @router.post("", response_model=LocationResponse, summary="위치 전송 및 매장 매칭")
@@ -259,8 +323,9 @@ async def post_locations(
     # ── 5) 반경 검색 (F-02). 쿼리는 02_DB_SCHEMA §7, core.match_stores()
     raw_matches = await core.match_stores(uid, point.lat, point.lng)
 
+    briefings = await asyncio.gather(*(build_briefing(m) for m in raw_matches))
     matches = [
-        StoreMatch(**m, briefing=template_briefing(m)) for m in raw_matches
+        StoreMatch(**m, briefing=b) for m, b in zip(raw_matches, briefings)
     ]
     logger.info(
         "위치 매칭: uid=%s (%.6f, %.6f) → 매장 %d곳 (갱신=%s)",

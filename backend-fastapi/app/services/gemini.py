@@ -15,8 +15,10 @@ DB에 남고 위치 알림이 엉뚱한 브랜드로 나가므로, 모델 판정
 서버 재검증(`_mismatch_reason`)을 2단으로 건다.
 """
 import asyncio
+import hashlib
 import json
 import logging
+import random
 import re
 from datetime import date
 from pathlib import Path
@@ -263,25 +265,34 @@ def _validate(payload) -> dict:
     return payload
 
 
-def _call_sync(images: list[tuple[bytes, str]]) -> dict:
-    """이미지 전체를 한 번의 호출에 담는다. 장수가 늘어도 API 호출은 1회다."""
+def _get_client():
+    """Vertex/API Key 두 인증 경로를 공통으로 만든다. 임베딩·브리핑 생성도 이걸 쓴다."""
     settings = core.get_settings()
     try:
         from google import genai
-        from google.genai import types
     except ImportError as exc:
         raise GeminiUnavailable("google-genai 미설치") from exc
 
     if settings.use_vertex:
         # ADC(gcloud auth application-default login)로 인증한다.
         # 배포 시에는 Cloud Run 서비스 계정이 자동으로 주입되므로 코드 변경이 없다.
-        client = genai.Client(
+        return genai.Client(
             vertexai=True,
             project=settings.gcp_project_id,
             location=settings.gcp_location,
         )
-    else:
-        client = genai.Client(api_key=settings.gemini_api_key)
+    return genai.Client(api_key=settings.gemini_api_key)
+
+
+def _call_sync(images: list[tuple[bytes, str]]) -> dict:
+    """이미지 전체를 한 번의 호출에 담는다. 장수가 늘어도 API 호출은 1회다."""
+    settings = core.get_settings()
+    try:
+        from google.genai import types
+    except ImportError as exc:
+        raise GeminiUnavailable("google-genai 미설치") from exc
+
+    client = _get_client()
 
     parts = [
         types.Part.from_bytes(data=data, mime_type=mime) for data, mime in images
@@ -491,3 +502,148 @@ def to_status_response(record: core.CouponRecord) -> core.CouponStatusResponse:
         data=data,
         error=core.CouponError(**record.error) if record.error else None,
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5. 임베딩 (F-04) — 02_DB_SCHEMA.md §8
+#    coupon_rules 적재(scripts/index_rules.py)와 검색 질의(app/api/rules.py,
+#    app/api/locations.py) 양쪽이 이 함수 하나를 쓴다. gemini-embedding-001은
+#    비대칭 모델이라 "저장할 문서"와 "찾는 질문"에 task_type을 다르게 줘야
+#    같은 벡터 공간에서 검색 품질이 나온다.
+# ══════════════════════════════════════════════════════════════════
+def _mock_embedding(text: str, dim: int) -> list[float]:
+    """자격증명이 없어도 벡터 검색 SQL·정렬 경로는 확인할 수 있게 한다.
+
+    의미 있는 임베딩이 아니다 — 같은 문자열이면 항상 같은 벡터가 나온다는
+    것만 보장한다 (해시 시드). 실제 유사도 순위는 신뢰하지 않는다.
+    """
+    seed = int(hashlib.sha256(text.encode()).hexdigest(), 16)
+    rng = random.Random(seed)
+    vec = [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+    norm = sum(v * v for v in vec) ** 0.5 or 1.0
+    return [v / norm for v in vec]
+
+
+def _embed_sync(text: str, task_type: str) -> list[float]:
+    from google.genai import types
+
+    settings = core.get_settings()
+    client = _get_client()
+    response = client.models.embed_content(
+        model=settings.embedding_model,
+        contents=text,
+        config=types.EmbedContentConfig(
+            task_type=task_type,
+            output_dimensionality=settings.embedding_dim,
+        ),
+    )
+    return list(response.embeddings[0].values)
+
+
+async def embed_text(text: str, *, is_query: bool) -> list[float]:
+    """RETRIEVAL_DOCUMENT(적재 시) / RETRIEVAL_QUERY(검색 시) 비대칭 임베딩.
+
+    실패·타임아웃 시 GeminiUnavailable을 던진다. 호출부가 "규칙 없음"으로
+    안전하게 처리한다 — 검색 실패를 사용 가능/불가 어느 쪽으로도 단정하지 않는다.
+    """
+    settings = core.get_settings()
+    if settings.use_mock_gemini:
+        return _mock_embedding(text, settings.embedding_dim)
+    task_type = "RETRIEVAL_QUERY" if is_query else "RETRIEVAL_DOCUMENT"
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_embed_sync, text, task_type),
+            timeout=settings.gemini_timeout_s,
+        )
+    except asyncio.TimeoutError as exc:
+        raise GeminiUnavailable("임베딩 timeout") from exc
+    except Exception as exc:
+        logger.warning("임베딩 실패: %s", exc)
+        raise GeminiUnavailable(str(exc)) from exc
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. 브리핑 생성 (F-03) — 01_API_SPEC.md §5, 02_DB_SCHEMA.md §8.6
+#    실패·타임아웃이면 예외를 던진다. TEMPLATE 폴백 문장은 여기서 만들지
+#    않는다 — app/api/locations.py의 template_briefing()이 담당한다.
+# ══════════════════════════════════════════════════════════════════
+BRIEFING_SYSTEM_INSTRUCTION = """당신은 쿠폰콕 앱이 사용자 근처 매장을 안내할 때 보여줄
+한국어 브리핑 문장을 만든다. 다음을 반드시 지킨다.
+
+1. 100자 이내 한두 문장으로 쓴다. 존댓말을 쓰되 광고 문구처럼 딱딱하지 않게 쓴다.
+2. 입력으로 주어진 사실(매장명, 거리, 보유 쿠폰, 확인된 규칙)만 사용한다.
+   주어지지 않은 정보(가격, 다른 매장, 재고, 할인율 등)를 지어내지 않는다.
+3. "확인된 규칙"이 비어 있으면 이 매장에서 쿠폰을 실제로 쓸 수 있는지 여부를
+   단정하지 않는다. "사용 가능합니다" 같은 확답을 쓰지 않는다. 매장·쿠폰 정보만
+   안내한다.
+4. "확인된 규칙"에 rule_type이 EXCLUSION(사용 불가)인 항목이 있으면 반드시
+   반영한다. 사용 불가 조건이 있는 매장을 사용 가능하다고 안내하면 안 된다.
+5. 각 규칙의 verified가 false면 미검증 정보다. "~일 수 있어요", "~로 안내되어
+   있어요" 같은 완곡한 표현을 쓴다. 단정형(~입니다/~됩니다)을 쓰지 않는다.
+   verified가 true인 규칙만 단정형으로 말해도 된다.
+6. 문장만 출력한다. 설명, 마크다운, 따옴표를 붙이지 않는다."""
+
+
+def _briefing_context(match: dict, rules: list[dict]) -> str:
+    coupons = match.get("available_coupons") or []
+    payload = {
+        "store_name": match["store_name"],
+        "distance_m": match["distance_m"],
+        "coupons": [
+            {
+                "product_name": c.get("product_name"),
+                "coupon_type": c.get("coupon_type"),
+                "face_value": c.get("face_value"),
+                "days_left": c.get("days_left"),
+            }
+            for c in coupons
+        ],
+        "rules": [
+            {
+                "content": r["content"],
+                "rule_type": r.get("rule_type"),
+                "verified": r.get("verified_by") is not None,
+            }
+            for r in rules
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _generate_briefing_sync(match: dict, rules: list[dict]) -> str:
+    from google.genai import types
+
+    settings = core.get_settings()
+    client = _get_client()
+    response = client.models.generate_content(
+        model=settings.gemini_model,
+        contents=[_briefing_context(match, rules)],
+        config=types.GenerateContentConfig(
+            system_instruction=BRIEFING_SYSTEM_INSTRUCTION,
+            temperature=0.4,
+            response_mime_type="text/plain",
+        ),
+    )
+    text = (response.text or "").strip()
+    if not text:
+        raise GeminiParseError("빈 브리핑 응답")
+    return text
+
+
+async def generate_briefing_text(match: dict, rules: list[dict]) -> str:
+    """MOCK 모드·실패·타임아웃이면 예외를 던진다 — 호출부가 TEMPLATE로 폴백한다."""
+    settings = core.get_settings()
+    if settings.use_mock_gemini:
+        raise GeminiUnavailable("MOCK 모드에서는 브리핑을 생성하지 않는다")
+    try:
+        text = await asyncio.wait_for(
+            asyncio.to_thread(_generate_briefing_sync, match, rules),
+            timeout=settings.briefing_timeout_s,
+        )
+    except asyncio.TimeoutError as exc:
+        raise GeminiUnavailable("브리핑 생성 timeout") from exc
+    except (GeminiUnavailable, GeminiParseError):
+        raise
+    except Exception as exc:
+        raise GeminiUnavailable(str(exc)) from exc
+    return text[:100]

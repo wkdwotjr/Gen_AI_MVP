@@ -1,10 +1,10 @@
 00. 진행상황
 
-최종 수정: 2026-08-11 (v7) 규칙: 세션을 옮길 때마다 이 문서를 먼저 갱신한다. 갱신하지 않은 채 다음 세션을 시작하지 않는다. 마감: 2026-08-12 발표
+최종 수정: 2026-08-11 (v8) 규칙: 세션을 옮길 때마다 이 문서를 먼저 갱신한다. 갱신하지 않은 채 다음 세션을 시작하지 않는다. 마감: 2026-08-12 발표
 
 지금 상태 한 줄
 
-Cloud Run 배포 완료. https://couponkok-api-xiwykxhkda-du.a.run.app — D-1~D-6 전부 통과(카카오맵·비동기 파싱 포함, 사용자 수동 확인). 다음 세션은 F-03(Gemini 브리핑) + F-04(RAG).
+F-03(Gemini 브리핑) + F-04(RAG) 로컬 구현·검증 완료(아주대 좌표에서 briefing.generated_by="GEMINI" 확인). 아직 배포 안 됨 — Cloud Run은 여전히 08-11 오전 커밋(TEMPLATE 전용)으로 떠 있다. 다음 세션은 룰북 실사 확보(사진→scripts/extract_rules.py) 또는 재배포 중 택1.
 
 완료
  01_API_SPEC.md / 02_DB_SCHEMA.md 합의
@@ -25,6 +25,30 @@ Cloud Run 배포 완료. https://couponkok-api-xiwykxhkda-du.a.run.app — D-1~D
  RESPONSE_SCHEMA에 coupon_type/face_value 누락 수정 — 수정 후 PRODUCT / 2000 정상 저장 확인
  다중 이미지 안전장치 실측 — 서로 다른 브랜드 2장 투입 시 MULTIPLE_COUPONS 정상 반환
  요청 전체 이미지 용량 상한 15MB (MAX_TOTAL_IMAGE_BYTES)
+2026-08-11 세션 (F-03 브리핑 + F-04 RAG)
+ app/services/gemini.py — embed_text()(F-04, RETRIEVAL_DOCUMENT/QUERY 비대칭 임베딩) +
+   generate_briefing_text()(F-03) 추가. 클라이언트 생성(_get_client)을 parse_coupon과 공통화
+ app/core.py — search_rules() 추가 (§8.5: brand_id(+_common) × store_type(+NORMAL) 사전 필터
+   → 코사인 거리 top_k). pgvector-python 패키지 없이 '[0.1,0.2,...]' 텍스트 → CAST(...AS vector)
+   방식으로 넣는다 (C-19)
+ POST /api/v1/rules/search 신설 (app/api/rules.py, 01_API_SPEC.md §6 그대로) — RAG 단독 시연용
+ app/api/locations.py — 매장별 template_briefing() 고정 호출을 build_briefing()으로 교체.
+   RAG 검색(rag_rules_for) → Gemini 문장 생성 → 실패/타임아웃(10초) 시 TEMPLATE 폴백.
+   여러 매장은 asyncio.gather로 동시 생성
+ RAG 질의 임베딩 캐싱 (C-20) — /locations는 고정 질의문 하나를 프로세스 생애주기 동안
+   1회만 임베딩해 재사용. 매장마다 새 질의를 지어 임베딩하면 호출만 늘고, 브랜드·매장유형
+   사전 필터가 이미 검색을 좁히므로 이득이 없다. /rules/search는 사용자 입력 질의를 매번 임베딩
+ data/rules.json 시드 — 스타벅스 백화점/대형마트/병원/공항/고속도로 휴게소 제외 규칙 5건
+   (01_API_SPEC.md §6 예시 그대로). 팀 보유 쿠폰 이미지가 아직 없어(data/rule_images/ 빈 폴더)
+   그 외 브랜드는 시드하지 않음 — 검증 못 한 정책을 지어내면 §8.6 원칙과 충돌한다 (C-21)
+ scripts/index_rules.py 작성 + 실행 — rules.json 5건 임베딩 후 coupon_rules 적재 확인
+   (vector_dims(embedding)=768, embed_model=gemini-embedding-001). 전부 verified_by=null
+ scripts/extract_rules.py 스캐폴드 작성 — data/rule_images/*.jpg → Gemini Vision → 규칙 후보를
+   rules.json에 append. 아직 미실행(이미지 없음). data/rule_images/를 .gitignore에 추가
+   (실제 쿠폰 캡처라 바코드 노출 위험 — test_images/와 동일 취급)
+ 로컬 검증 — POST /rules/search(starbucks, DEPARTMENT_STORE) 유사도 0.65~0.74로 정상 검색.
+   POST /locations(아주대) 두 매장 모두 generated_by="GEMINI", rules=[] (두 매장 다 NORMAL이라
+   백화점 제외 규칙 미적용 — 의도대로 "확인된 정보 없음"으로 처리, 단정 표현 없음)
 2026-08-11 세션 (웹 UI + 배포)
  웹 UI 1페이지 — static/index.html + StaticFiles 마운트. 로컬에서 지도·업로드·매칭 동작 확인
  Dockerfile / .dockerignore / deploy.ps1 작성 (.ps1은 ASCII 전용)
@@ -55,9 +79,10 @@ L5 컴포즈커피 수원매교점 → matches: [] (INNER JOIN으로 쿠폰 없�
 L6 INVALID_COORDINATE / L9 TOO_MANY_POINTS / L10 VALIDATION_ERROR
  검증 도구 3종 추가 — test_locations.ps1(ASCII 전용), scripts/check_f02.py, scripts/verify_l4_l7.py
 다음 할 일 (순서대로)
- git 첫 커밋 ← 지금 여기 (push는 별도 확인 후)
- F-03 Gemini 브리핑 (현재는 TEMPLATE 폴백만 동작) ← 다음 세션
- F-04 RAG — 쿠폰 이미지에서 규칙 추출 → 색인 → 검색
+ 룰북 확장 — 팀 보유 쿠폰 이미지를 data/rule_images/에 넣고 scripts/extract_rules.py 실행 →
+   후보 검수 → verified_by 채우고 scripts/index_rules.py 재실행 ← 지금 여기
+ F-03/F-04 반영해 재배포 (.\deploy.ps1 -SkipBuild 아님, 코드 변경이라 풀빌드 필요) →
+   배포 후 D-1~D-6 재검증 + briefing.generated_by="GEMINI" 배포 환경에서도 확인
  파싱 정확도 10장 측정 / TC-01~05 / 사용자 테스트 2명
  제출 문서 06~17절 갱신, 발표자료, 리허설
 
@@ -102,10 +127,15 @@ C-15	속도 이상치 필터(IMPLAUSIBLE_SPEED) 제거	① 이상치 판정은 �
 C-16	배포 환경에서도 AUTH_DISABLED=true 유지 (01_API_SPEC §1.2 원문을 대체)	웹 클라이언트 전환(C-2)으로 심사자가 URL 접속만으로 시연을 봐야 하는데, Firebase 익명 인증은 브라우저마다 다른 uid를 발급해 시연용 쿠폰이 보이지 않게 만든다. 대신 배포 URL이 사실상 공용 계정이 되는 한계를 §1.2에 명시하고, 실제 개인 쿠폰은 등록하지 않는 운영 규칙으로 상쇄한다. 바코드 원문 미저장(C-11)이 노출 상한을 제한한다
 C-17	비밀값 주입을 --set-env-vars가 아니라 Secret Manager(--set-secrets)로	DB 비밀번호가 Cloud Run 콘솔의 환경변수 탭과 gcloud run services describe 출력에 평문으로 남는다. 제출문서 점검 항목("환경 변수와 Secret의 실제 값이 노출되지 않았다")과 직접 충돌
 C-18	배포 환경 DB 유저를 postgres(슈퍼유저)가 아니라 couponkok_app 전용 계정으로 분리	로컬 개발은 계속 postgres + Cloud SQL Auth Proxy를 쓰지만, 배포 환경은 4개 테이블(coupons/stores/users/coupon_rules)에 대한 SELECT/INSERT/UPDATE/DELETE만 가능한 별도 계정(db/grants_app_user.sql)으로 최소 권한 원칙 적용. .env에 DB_PASSWORD_APP을 별도로 두고 deploy.ps1 -SyncSecret이 이 값을 Secret Manager에 올린다
+C-19	coupon_rules.embedding 적재를 pgvector-python 없이 텍스트 캐스트로	'[0.1,0.2,...]' 형식 문자열을 CAST(:embedding AS vector)로 넣는다. 이미 원시 SQL(text()) 스타일을 쓰고 있어 ORM 어댑터 패키지를 하나 더 추가할 이유가 없다. 02_DB_SCHEMA §5.2의 geography 캐스트 이슈와 같은 패턴 — Postgres 쪽 텍스트 입력 함수를 그대로 신뢰한다
+C-20	F-04 RAG 질의 임베딩을 /locations 요청마다 새로 만들지 않고 프로세스 생애주기 동안 캐싱	매장별로 다른 질의문을 지어 임베딩하면 Gemini 호출만 늘고, 실제 검색 좁히기는 brand_id/store_type SQL 사전 필터(§8.5 ①)가 담당하므로 질의문을 다양화해도 얻는 게 없다. 고정 질의문 RAG_QUERY 하나를 최초 1회만 임베딩해 재사용한다. §6 단독 검색 화면(POST /rules/search)은 사용자가 직접 입력한 질의를 매번 임베딩한다 — 그쪽은 질의 다양성 자체가 시연 목적이다
+C-21	F-04 지식 원천을 API_SPEC §6 예시(스타벅스 백화점 제외) 1건만 시드하고 나머지 브랜드는 비워둠	팀 보유 쿠폰 이미지(data/rule_images/)가 2026-08-11 세션 기준 아직 없어 scripts/extract_rules.py 추출 경로가 비어 있다. 검증 못 한 브랜드 정책을 지어내 채우면 "규칙을 못 찾은 것과 규칙이 없는 것은 다르다"는 §8.6 원칙과 정면으로 충돌한다. 시드한 1건도 verified_by=null로 두어 미검증 상태를 정직하게 남긴다 — 사람이 사진을 확보하고 검수해야 채워진다
+C-22	F-03/F-04 구현 후에도 위치 매칭(F-02) 데모에서는 스타벅스 제외 규칙이 뜨지 않음 — 의도된 상태	stores 433건이 전량 store_type='NORMAL'이라(§5.1, C-6) 백화점/대형마트 등 예외가 GPS 매칭 경로로는 애초에 걸릴 수 없다. RAG 자체 시연은 POST /rules/search를 brand_id=starbucks, store_type=DEPARTMENT_STORE로 직접 호출하는 별도 화면에서 한다 — 01_API_SPEC §6이 원래 그 용도로 분리해 둔 엔드포인트다
 미해결 이슈
 항목	내용
 파싱 응답 시간	실측 1장 9초 / 2장 11초. 문서 5절 요구사항 3초는 달성 불가 → 목표를 15초로 상향 조정하고 사유를 5절에 명시(Gemini Vision 멀티모달 추론 특성). 폴링 예산 30초 내라 기능상 문제 없음
-시연 대표 브랜드	위치 매칭(F-02)은 메가MGC커피(128건), RAG 예외조건(F-04)은 스타벅스. 아주대 좌표에서 두 브랜드가 동시에 잡히므로 한 화면에 다 보인다
+시연 대표 브랜드	위치 매칭(F-02)은 메가MGC커피(128건), RAG 예외조건(F-04)은 스타벅스. 아주대 좌표에서 두 브랜드가 동시에 잡히므로 한 화면에 다 보인다. 단 스타벅스 예외 규칙 자체는 GPS 매칭이 아니라 POST /rules/search 단독 화면에서 시연한다(C-22)
+RAG 지식 커버리지	coupon_rules에 스타벅스 백화점 제외 1건(5개 store_type으로 복제)만 있다. 다른 8개 브랜드는 규칙이 없어 briefing.rules가 항상 []다 — 오류 아님, "확인된 정보 없음"이 맞는 동작이다(§8.6). verified_by도 전부 null이라 브리핑 문장이 단정형을 쓰지 않는다. 팀 보유 쿠폰 이미지 확보가 최우선 후속 작업(C-21)
 좌표 이력 부재	location_points 없음 → 이동 경로·이상치 판정 불가 (C-13, C-15). 후반기 백로그
 스키마 수정 전 쿠폰 잔존	coupon_type=UNKNOWN, product_name/face_value NULL인 행이 DB에 남아 있다. 재파싱하려면 원본 이미지가 필요한데 image_gcs_paths 미구현이라 삭제로 처리한다
 Swagger UI 다중 파일 업로드	list[UploadFile]을 파일 선택기로 렌더하지 못함. 서버 문제 아님. 웹 UI의 <input type="file" multiple>로 해소 예정
@@ -201,3 +231,20 @@ cd backend-fastapi
 .ps1은 ASCII 전용. 한글 주석을 넣는 순간 PS 5.1이 CP949로 읽어 엉뚱한 줄에서 파서가 깨진다
 배포 후 스크립트가 출력하는 URL을 ① 01_API_SPEC §1.1 ② 카카오 JavaScript SDK 도메인 두 곳에 반영
 로컬 개발은 여전히 Cloud SQL Auth Proxy를 쓴다. .env에 INSTANCE_CONN을 채워도 DB_HOST가 있으면 TCP 경로를 탄다(배포 시에는 DB_HOST를 주입하지 않아 유닉스 소켓으로 전환)
+
+⑧ RAG 룰북 확장 (F-04, backend-fastapi 기준)
+
+powershell
+
+powershell
+# 1) 팀 보유 쿠폰 이미지를 data/rule_images/ 에 넣는다 (.gitignore 처리됨, 커밋 안 됨)
+python scripts\extract_rules.py    # Gemini Vision → data/rules.json 에 후보 append (verified_by=null)
+
+# 2) 사람이 data/rules.json 을 열어 content 사실 확인 + verified_by 채움
+
+# 3) 적재 (몇 번을 다시 돌려도 안전 — rule_id 기준 UPSERT)
+python scripts\index_rules.py
+
+extract_rules.py는 Gemini 자격증명이 없으면(MOCK 모드) 즉시 종료한다 — MOCK 임베딩으로
+추출해봐야 의미가 없기 때문. index_rules.py는 MOCK이어도 해시 기반 벡터로 일단 적재는
+되지만 검색 순위가 무의미하므로 시연 전 반드시 실제 자격증명으로 재실행할 것

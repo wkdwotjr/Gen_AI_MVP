@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app import core
-from app.api import coupons, locations
+from app.api import coupons, locations, rules
 
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
@@ -57,6 +57,7 @@ app.add_middleware(
 core.register_exception_handlers(app)
 app.include_router(coupons.router, prefix=API_V1_PREFIX)
 app.include_router(locations.router, prefix=API_V1_PREFIX)
+app.include_router(rules.router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health")

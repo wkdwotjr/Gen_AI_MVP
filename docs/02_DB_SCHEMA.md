@@ -1,6 +1,6 @@
 02. 데이터베이스 스키마 (DB Schema)
 
-문서 상태: v0.3 최종 수정: 2026-08-10 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-04 RAG 예외 조건) DBMS: PostgreSQL 15.18 / PostGIS 3.6.0 / pgcrypto 1.3 / pgvector 0.8.5 (Cloud SQL asia-northeast3) 원칙: 4일 스프린트다. 테이블은 3개(+RAG 인덱스 1개)로 고정하고, 정규화보다 조회 한 방에 끝나는 구조를 택한다.
+문서 상태: v0.3 최종 수정: 2026-08-11 (coupon_rules 적재 현황 갱신, 스키마 변경 없음) 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-04 RAG 예외 조건) DBMS: PostgreSQL 15.18 / PostGIS 3.6.0 / pgcrypto 1.3 / pgvector 0.8.5 (Cloud SQL asia-northeast3) 원칙: 4일 스프린트다. 테이블은 3개(+RAG 인덱스 1개)로 고정하고, 정규화보다 조회 한 방에 끝나는 구조를 택한다.
 
 0. 설계 원칙과 의도적으로 잘라낸 것
 0.1 원칙
@@ -294,6 +294,8 @@ verified_by	TEXT	팀에서 사람이 직접 확인한 사람 이름. NULL이면 
 created_at	TIMESTAMPTZ	적재 시각
 
 rule_type에 CROSS_USE를 둔 이유: 메가MGC커피 상품교환권에 "사용가능금액 2,000원"이 함께 표기된다. "이 상품권으로 다른 음료를 사고 차액을 낼 수 있는가"는 쿠폰의 속성이 아니라 브랜드 정책이며, 컬럼으로 표현할 수 없는 이 판단이 RAG가 답해야 할 대표 질문이다(§4 coupon_type 참조).
+
+적재 현황 (2026-08-11): 5건 (스타벅스 백화점/대형마트/병원/공항/고속도로 휴게소 제외 — 01_API_SPEC.md §6 예시를 store_type 5종으로 복제). embed_model=gemini-embedding-001, vector_dims=768 실측 확인. verified_by는 전부 null(미검증) — scripts/index_rules.py는 검증 여부를 확인하지 않고 그대로 적재하므로, 브리핑 문장이 단정형을 피하는 것으로 이를 상쇄한다(§8.6). 목표했던 브랜드 9개 × 2~3건(§8.4)에는 아직 못 미친다 — 팀 보유 쿠폰 이미지 확보가 선행되어야 한다(scripts/extract_rules.py).
 
 8.3 지식 원천 — 쿠폰 이미지 추출 + 수기 보강 하이브리드 (C-12)
 
