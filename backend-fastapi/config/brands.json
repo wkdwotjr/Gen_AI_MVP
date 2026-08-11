@@ -1,0 +1,82 @@
+{
+  "_comment": [
+    "브랜드 코드의 단일 출처(single source of truth).",
+    "coupons.brand_id 와 stores.brand_id 는 이 파일의 brand_id 로만 채운다.",
+    "02_DB_SCHEMA.md §0.1-2 에서 brands 마스터 테이블을 만들지 않기로 했으므로,",
+    "이 파일이 그 역할을 대신한다. 여기 없는 코드가 DB에 들어가면 조인이 조용히 깨진다.",
+    "",
+    "수록 기준: stores 테이블에 매장이 1건 이상 적재된 브랜드만 넣는다.",
+    "매장이 없는 브랜드를 넣으면 brand_id 는 채워지는데 매칭은 0건이 되어",
+    "'왜 알림이 안 오지'의 원인을 찾기 어려워진다. 지원하지 않는 브랜드는",
+    "brand_id = null 로 두고 앱에서 '아직 지원하지 않는 브랜드' 안내를 띄운다.",
+    "",
+    "aliases 는 Gemini 가 UNKNOWN 을 반환했을 때만 쓰이는 2차 안전망이다.",
+    "1차 판정은 Gemini 의 enum 분류가 한다."
+  ],
+  "_version": "1.0.0",
+  "_updated_at": "2026-08-10",
+  "brands": [
+    {
+      "brand_id": "megamgc",
+      "display": "메가MGC커피",
+      "store_count_at_load": 128,
+      "aliases": [
+        "메가MGC커피", "메가엠지씨커피", "메가커피", "메가엠지씨",
+        "MEGAMGCCOFFEE", "MEGA MGC COFFEE", "MEGACOFFEE"
+      ]
+    },
+    {
+      "brand_id": "compose",
+      "display": "컴포즈커피",
+      "store_count_at_load": 79,
+      "aliases": ["컴포즈커피", "컴포즈", "COMPOSE COFFEE", "COMPOSE"]
+    },
+    {
+      "brand_id": "paris",
+      "display": "파리바게뜨",
+      "store_count_at_load": 55,
+      "aliases": ["파리바게뜨", "파리바게트", "PARIS BAGUETTE", "파바"]
+    },
+    {
+      "brand_id": "ediya",
+      "display": "이디야커피",
+      "store_count_at_load": 43,
+      "aliases": ["이디야커피", "이디야", "EDIYA COFFEE", "EDIYA"]
+    },
+    {
+      "brand_id": "twosome",
+      "display": "투썸플레이스",
+      "store_count_at_load": 42,
+      "aliases": ["투썸플레이스", "투썸", "A TWOSOME PLACE", "TWOSOME"]
+    },
+    {
+      "brand_id": "paikdabang",
+      "display": "빽다방",
+      "store_count_at_load": 40,
+      "aliases": ["빽다방", "PAIK'S COFFEE", "PAIKS COFFEE", "백다방"]
+    },
+    {
+      "brand_id": "baskinrobbins",
+      "display": "배스킨라빈스",
+      "store_count_at_load": 22,
+      "aliases": [
+        "배스킨라빈스", "베스킨라빈스", "배스킨라빈스31", "BASKIN ROBBINS",
+        "BASKINROBBINS", "BR31", "배라"
+      ]
+    },
+    {
+      "brand_id": "tourlesjours",
+      "display": "뚜레쥬르",
+      "store_count_at_load": 22,
+      "_note": "정확한 표기는 TOUS LES JOURS(touslesjours)이나, 적재 시점에 tourlesjours로 굳었다. 내부 조인 키일 뿐이라 기능에 영향은 없다. 재적재할 일이 생기면 그때 함께 교정한다.",
+      "aliases": ["뚜레쥬르", "뚜레주르", "TOUS LES JOURS", "TOUSLESJOURS", "TLJ"]
+    },
+    {
+      "brand_id": "starbucks",
+      "display": "스타벅스",
+      "store_count_at_load": 2,
+      "_note": "직영 브랜드라 소상공인 상가정보에 거의 없다(경기도 전체 7건). 수동 시드 2건뿐이므로 위치 매칭 시연의 주인공으로는 부적합하다. F-04 RAG 예외 조건(백화점 입점 매장 사용 불가) 시연 전용으로 유지한다.",
+      "aliases": ["스타벅스", "스타벅스코리아", "스타벅스커피", "STARBUCKS", "별다방"]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+# ── Web ────────────────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12        # multipart/form-data (이미지 업로드) 필수
+
+# ── Config / Validation ────────────────────────────────────────────────
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+python-dotenv>=1.0.1
+
+# ── Google Gemini ──────────────────────────────────────────────────────
+# 신규 통합 SDK. API Key 방식과 Vertex AI 방식을 같은 코드로 전환 가능하다.
+# (구 google-generativeai는 유지보수 모드이므로 신규 프로젝트에는 권장하지 않는다)
+google-genai>=1.0.0
+
+# ── Auth ───────────────────────────────────────────────────────────────
+firebase-admin>=6.5.0           # AUTH_DISABLED=false 일 때만 실제로 사용
+
+# ── 이후 단계에서 추가 (지금 설치하면 의존성만 무거워짐) ────────────────
+# [F-01 DB 연동 시]
+sqlalchemy>=2.0.36
+psycopg[binary]>=3.2
+# asyncpg>=0.30.0
+# geoalchemy2>=0.15.2
+# alembic>=1.14.0
+# google-cloud-storage>=2.18.0
+#
+# [F-04 RAG 구현 시]
+# langchain>=0.3.0
+# langchain-google-genai>=2.0.0
+# langchain-community>=0.3.0
+# chromadb>=0.5.0

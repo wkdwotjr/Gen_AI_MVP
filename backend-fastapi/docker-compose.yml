@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgis/postgis:15-3.4
+    container_name: couponkok-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: localdevpw
+      POSTGRES_DB: couponkok
+      # 로컬 검증 단계이므로 인스턴스 타임존은 손대지 않는다 (D-1: 쿼리에서 KST 명시)
+    ports:
+      - "5432:5432"
+    volumes:
+      - couponkok_pgdata:/var/lib/postgresql/data
+
+volumes:
+  couponkok_pgdata:

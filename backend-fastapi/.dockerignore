@@ -1,0 +1,39 @@
+# backend-fastapi/.dockerignore
+# 여기 빠뜨리면 (1) 비밀값이 이미지에 박히거나 (2) 업로드가 수백 MB로 불어난다.
+
+# --- 절대 이미지에 들어가면 안 되는 것 ---
+.env
+.env.*
+!.env.example
+*.json.key
+*-key.json
+service-account*.json
+adc.json
+
+# --- 용량 폭탄 ---
+.venv/
+venv/
+tools/                 # cloud-sql-proxy.exe (약 30MB, 배포 환경에서는 유닉스 소켓이라 불필요)
+test_images/
+*.csv                  # db/stores_seed.csv 포함. 적재는 로컬에서 끝났고 런타임에 쓰지 않는다
+                       # (런타임에 읽는다면 이 줄을 지우고 !db/stores_seed.csv 를 추가할 것)
+
+# --- 빌드 산출물 / 캐시 ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- 개발 도구 / 문서 ---
+.git/
+.gitignore
+.idea/
+.vscode/
+*.md
+docs/
+scripts/
+*.ps1
+Dockerfile
+.dockerignore

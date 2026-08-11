@@ -1,0 +1,27 @@
+# 비밀값 (CLAUDE.md: 평문 비밀번호/키 커밋 금지)
+.env
+.env.*
+!.env.example
+*-key.json
+service-account*.json
+adc.json
+
+# 로컬 전용 도구 / 대용량 원본 데이터 (CLAUDE.md 명시)
+backend-fastapi/tools/
+test_images/
+backend-fastapi/data/raw/
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / 에디터
+.vscode/
+.idea/
+Thumbs.db
