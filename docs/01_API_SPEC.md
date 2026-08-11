@@ -1,6 +1,10 @@
 01. API 명세 (API Specification)
 
-문서 상태: v0.6 최종 수정: 2026-08-11 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-03 브리핑 생성, F-04 RAG 예외 조건) 원칙: 이 문서에 합의된 스키마가 계약이다. 코드가 문서와 달라지면 문서를 먼저 고친다.
+문서 상태: v0.7 최종 수정: 2026-08-11 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-03 브리핑 생성, F-04 RAG 예외 조건) 원칙: 이 문서에 합의된 스키마가 계약이다. 코드가 문서와 달라지면 문서를 먼저 고친다.
+
+v0.7 변경점
+
+§4, §5: CouponData에 usage_note 필드 추가 — 이 쿠폰 한 장에 적힌 이용 제한 문구. F-01 파싱 시 함께 추출하며, coupon_rules(F-04 RAG)와 달리 브랜드 전체로 일반화하지 않고 그 쿠폰의 브리핑에서만 참고한다 (00_PROGRESS.md C-23). DB는 db/migrate_20260811.sql
 
 v0.6 변경점
 
@@ -217,6 +221,7 @@ json
     "face_value": 2000,
     "expires_at": "2027-03-17",
     "days_left": 219,
+    "usage_note": null,
     "barcode_masked": "5014****8004",
     "barcode_format": "CODE128",
     "is_used": false,
@@ -232,6 +237,7 @@ coupon_type	enum	PRODUCT(상품교환권) / AMOUNT(금액권) / DISCOUNT(할인�
 face_value	int | null	액면가·사용가능금액(원). PRODUCT에도 존재할 수 있다 (상품교환권에 금액이 함께 표기되는 경우가 흔함). 인식 실패 시 null
 expires_at	string | null	KST 달력 날짜. 인식 실패 시 null
 days_left	int | null	서버가 KST 기준으로 계산해 내려준다. 클라이언트가 직접 계산하지 않는다
+usage_note	string | null	**이 쿠폰 한 장**에 적힌 이용 제한 문구(교환처 제외 매장 등). 없으면 null. brand_id와 달리 브랜드 전체 정책이 아니므로 coupon_rules(F-04 RAG)에는 색인하지 않는다 — §5 브리핑에서 그 쿠폰에 한정해서만 참고한다 (00_PROGRESS.md C-23)
 barcode_masked	string | null	마스킹된 바코드. 원문은 어떤 응답에도, DB에도 저장하지 않는다
 confidence	object	필드별 신뢰도 0.0~1.0
 needs_review	bool	신뢰도가 임계값(0.7) 미만인 필드가 있으면 true. coupon_type='AMOUNT'인 경우 product_name 신뢰도는 이 판정에서 제외한다 — 금액권에 상품명이 없는 것은 정상이다
@@ -365,12 +371,13 @@ json
           "product_name": "(ICE)아메리카노",
           "face_value": 2000,
           "expires_at": "2027-03-17",
-          "days_left": 219
+          "days_left": 219,
+          "usage_note": null
         }
       ],
       "briefing": {
         "text": "150m 앞 메가MGC커피 아주대점. '(ICE)아메리카노' 쿠폰이 있어요.",
-        "generated_by": "TEMPLATE",
+        "generated_by": "GEMINI",
         "rules": []
       }
     }
@@ -388,6 +395,7 @@ matches	사용 가능한 쿠폰이 1개 이상 있는 매장만 포함. 거리 �
 matches[].store_type	NORMAL 등. F-04 RAG 예외 조건 판정의 입력값이며 시연 화면에서 함께 보여준다
 matches[].source	PUBLIC_DATA(소상공인 상가정보) | MANUAL(직영 브랜드 등 수동 시드) | KAKAO_LOCAL(보조 조회, 미저장)
 matches[].available_coupons	만료 임박 순 정렬. 이미 사용 처리되었거나 만료된 쿠폰은 제외
+matches[].available_coupons[].usage_note	§4 CouponData의 usage_note와 동일 — 이 쿠폰 한 장에 한정된 사실. briefing이 참고하되 brand_id 전체로 일반화하지 않는다
 matches[].briefing	F-03(Gemini 브리핑) + F-04(RAG 검색) 결과
 briefing.generated_by	GEMINI 또는 TEMPLATE. F-03 구현 이전에는 항상 TEMPLATE이며, 구현 후에도 LLM 호출 실패 시 폴백 경로로 남는다
 briefing.rules	RAG 근거. 비어 있으면 **"확인된 정보 없음"**이며 사용 가능 여부를 단정하지 않는다. F-04 이전에는 항상 []

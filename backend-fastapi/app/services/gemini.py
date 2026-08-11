@@ -120,20 +120,32 @@ SYSTEM_INSTRUCTION = f"""당신은 한국 모바일 쿠폰(기프티콘) 이미�
    "○% 할인"·"○원 할인"이면 DISCOUNT, 판단이 서지 않으면 UNKNOWN.
    face_value는 "사용가능금액"·"금액권" 등에 표시된 금액을 숫자만 적는다.
    PRODUCT에도 금액이 함께 표시될 수 있다. 그 경우 둘 다 채운다.
+10. usage_note: **"교환처" 줄을 반드시 별도로 확인한다.** 브랜드/상품명을 정할 때
+    이미 봤더라도, 그 줄 안에 괄호나 슬래시로 예외가 적혀 있는지 다시 확인해야
+    한다. 예: "교환처 : 이마트(안양/부천점제외/트레이더스/노브랜드(직영))" →
+    괄호 안의 "안양/부천점제외" 부분이 사용 제한이다. 이런 제외·한정 표현
+    ("○○ 제외", "○○에서만 사용 가능", "타 쿠폰과 중복 사용 불가" 등)이 하나라도
+    있으면 절대 놓치지 말고 usage_note에 한국어 한 문장으로 옮겨 적는다.
+    (이 이마트 예시라면 usage_note = "안양점과 부천점에서는 사용할 수 없다.")
+    그런 제외·한정 표현이 전혀 없으면 null. 교환처가 단순히 "전국 매장" 처럼
+    제한 없이 적혀 있으면 그것도 null이다(제한이 없다는 것도 사용자에게
+    말해줄 새로운 정보가 아니다).
+    이 필드는 **이 쿠폰 한 장에 적힌 사실**이다. 같은 브랜드의 다른 쿠폰에도
+    똑같이 적용된다고 확대 해석하지 않는다 — 보이는 문구만 그대로 옮긴다.
 
 ── 이미지가 여러 장일 때 ──────────────────────────────────────
 
-10. 여러 장은 대개 **같은 쿠폰의 서로 다른 화면**이다. 카카오톡 선물하기는
+11. 여러 장은 대개 **같은 쿠폰의 서로 다른 화면**이다. 카카오톡 선물하기는
     상단 화면(브랜드·상품명·바코드)과 "선물 사용 정보" 화면(유효기간·사용가능금액·교환처)이
     분리돼 있다. 각 화면에서 읽은 값을 하나로 합쳐 최상위 필드에 채운다.
     한 화면에만 있는 값도 반드시 채운다.
-11. 같은 항목이 두 화면에 다르게 보이면:
+12. 같은 항목이 두 화면에 다르게 보이면:
     - expires_at은 "선물 사용 정보"/"유효기간" 화면 쪽을 우선한다.
       상단에 보이는 날짜는 발송일·주문일인 경우가 있다.
     - 그 밖의 항목은 더 또렷하게 읽히는 쪽을 택한다.
-12. per_image에는 이미지별로 그 화면에서만 읽은 값을 그대로 적는다.
+13. per_image에는 이미지별로 그 화면에서만 읽은 값을 그대로 적는다.
     합치기 전의 값이다. 브랜드를 못 읽은 화면은 UNKNOWN, 바코드가 없는 화면은 null.
-13. is_same_coupon: 주어진 이미지들이 같은 쿠폰이면 true. 브랜드가 서로 다르거나
+14. is_same_coupon: 주어진 이미지들이 같은 쿠폰이면 true. 브랜드가 서로 다르거나
     바코드 숫자가 서로 달라 명백히 다른 쿠폰이면 false로 하고 mismatch_reason에
     한 줄로 이유를 적는다. 확신이 없으면 true로 두지 말고 false로 한다 —
     잘못 합친 쿠폰은 사용자를 엉뚱한 매장으로 보낸다.
@@ -165,6 +177,9 @@ RESPONSE_SCHEMA = {
         "coupon_type": {"type": "string", "enum": COUPON_TYPES},
         "face_value": {"type": "integer", "nullable": True},
         "expires_at": {"type": "string", "nullable": True},
+        # 이 쿠폰 한 장에 적힌 이용 제한 문구. 브랜드 전체 정책이 아니다 —
+        # coupon_rules(RAG)로 색인하지 않고 이 쿠폰의 브리핑에서만 참고한다.
+        "usage_note": {"type": "string", "nullable": True},
         "barcode_number": {"type": "string", "nullable": True},
         "barcode_format": {
             "type": "string",
@@ -213,6 +228,7 @@ def _mock_result(n_images: int) -> dict:
         "coupon_type": "PRODUCT",
         "face_value": 2000,
         "expires_at": "2027-03-17",
+        "usage_note": None,
         "barcode_number": "501412348004",
         "barcode_format": "CODE128",
         "confidence": {"brand": 1.0, "product_name": 0.95, "expires_at": 1.0},
@@ -470,6 +486,7 @@ async def process_coupon(coupon_id: str, images: list[tuple[bytes, str]]) -> Non
         face_value=raw.get("face_value"),
         expires_at=expires.isoformat(),
         days_left=(expires - core.today_kst()).days,
+        usage_note=(raw.get("usage_note") or None),
         barcode_masked=mask_barcode(raw.get("barcode_number")),
         barcode_format=(raw.get("barcode_format") or None),
         is_used=False,
@@ -571,17 +588,22 @@ BRIEFING_SYSTEM_INSTRUCTION = """당신은 쿠폰콕 앱이 사용자 근처 매
 한국어 브리핑 문장을 만든다. 다음을 반드시 지킨다.
 
 1. 100자 이내 한두 문장으로 쓴다. 존댓말을 쓰되 광고 문구처럼 딱딱하지 않게 쓴다.
-2. 입력으로 주어진 사실(매장명, 거리, 보유 쿠폰, 확인된 규칙)만 사용한다.
-   주어지지 않은 정보(가격, 다른 매장, 재고, 할인율 등)를 지어내지 않는다.
-3. "확인된 규칙"이 비어 있으면 이 매장에서 쿠폰을 실제로 쓸 수 있는지 여부를
-   단정하지 않는다. "사용 가능합니다" 같은 확답을 쓰지 않는다. 매장·쿠폰 정보만
-   안내한다.
+2. 입력으로 주어진 사실(매장명, 거리, 보유 쿠폰, 쿠폰별 usage_note, 확인된 규칙)만
+   사용한다. 주어지지 않은 정보(가격, 다른 매장, 재고, 할인율 등)를 지어내지 않는다.
+3. "확인된 규칙"이 비어 있고 해당 쿠폰의 usage_note도 없으면, 이 매장에서 쿠폰을
+   실제로 쓸 수 있는지 여부를 단정하지 않는다. "사용 가능합니다" 같은 확답을
+   쓰지 않는다. 매장·쿠폰 정보만 안내한다.
 4. "확인된 규칙"에 rule_type이 EXCLUSION(사용 불가)인 항목이 있으면 반드시
    반영한다. 사용 불가 조건이 있는 매장을 사용 가능하다고 안내하면 안 된다.
 5. 각 규칙의 verified가 false면 미검증 정보다. "~일 수 있어요", "~로 안내되어
    있어요" 같은 완곡한 표현을 쓴다. 단정형(~입니다/~됩니다)을 쓰지 않는다.
    verified가 true인 규칙만 단정형으로 말해도 된다.
-6. 문장만 출력한다. 설명, 마크다운, 따옴표를 붙이지 않는다."""
+6. 쿠폰의 usage_note는 "확인된 규칙"과 성격이 다르다 — 그 브랜드 전체의 정책이
+   아니라 **이 쿠폰 한 장에 적힌 조건**이다. usage_note를 말할 때는 "이 쿠폰은",
+   "이 쿠폰에는" 처럼 해당 쿠폰에 한정해서 말하고, 같은 브랜드의 다른 쿠폰에도
+   똑같이 적용된다고 일반화하지 않는다. (예: "이 쿠폰은 안양점에서 사용할 수
+   없다고 적혀 있어요" O / "이 브랜드는 안양점에서 사용할 수 없어요" X)
+7. 문장만 출력한다. 설명, 마크다운, 따옴표를 붙이지 않는다."""
 
 
 def _briefing_context(match: dict, rules: list[dict]) -> str:
@@ -595,6 +617,10 @@ def _briefing_context(match: dict, rules: list[dict]) -> str:
                 "coupon_type": c.get("coupon_type"),
                 "face_value": c.get("face_value"),
                 "days_left": c.get("days_left"),
+                # 이 쿠폰 한 장에 적힌 이용조건. brand_rules와 달리 이 특정
+                # 쿠폰에만 해당하는 사실이다 — 아래 rules(브랜드 공통 정책)와
+                # 섞어서 일반화하면 안 된다.
+                "usage_note": c.get("usage_note"),
             }
             for c in coupons
         ],

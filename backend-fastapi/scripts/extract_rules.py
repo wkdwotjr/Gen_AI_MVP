@@ -26,6 +26,11 @@ import json
 import sys
 from pathlib import Path
 
+# Windows 콘솔 기본 코드페이지(cp949)는 em dash(—) 등 일부 유니코드를 인코딩하지
+# 못해 print()가 죽는다 (00_PROGRESS.md의 .ps1 CP949 이슈와 같은 계열). 실행 결과
+# 자체(data/rules.json 저장)는 이 줄과 무관하게 이미 끝난 뒤라 출력만 보호하면 된다.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import core  # noqa: E402
@@ -137,9 +142,20 @@ async def main() -> None:
         if RULES_PATH.exists() else {"rules": []}
     )
     existing_ids = {r["rule_id"] for r in existing["rules"]}
+    # source_name에 파일명을 그대로 적어두므로(예: "커피쿠폰_메가.jpg (Gemini 추출 후보 — ...)"),
+    # 이미 처리한 이미지인지는 이걸로 판별한다. 별도 상태 파일을 두지 않기 위한 선택 —
+    # 재실행 시 같은 이미지를 또 돌려 rul_..._02 같은 사실상 중복 후보가 쌓이는 것을 막는다.
+    already_processed = {
+        r["source_name"].split(" (Gemini 추출")[0]
+        for r in existing["rules"]
+        if "(Gemini 추출" in r.get("source_name", "")
+    }
 
     new_rules = []
     for image_path in images:
+        if image_path.name in already_processed:
+            print(f"[skip] 이미 처리된 이미지: {image_path.name}")
+            continue
         print(f"[info] 처리 중: {image_path.name}")
         raw = await asyncio.to_thread(_extract_one_sync, image_path)
         brand_id = gemini.resolve_brand_id(None, raw.get("brand_name")) or "UNKNOWN"

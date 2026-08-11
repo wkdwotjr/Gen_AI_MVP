@@ -57,7 +57,11 @@ CREATE TABLE IF NOT EXISTS coupons (
  
     -- 원본 (한 쿠폰이 여러 화면에 걸쳐 있을 수 있다 — 카카오톡 선물하기)
     image_gcs_paths   TEXT[],
- 
+
+    -- 이 쿠폰 한 장에 적힌 이용조건 문구. 브랜드 전체 정책(coupon_rules)이
+    -- 아니라 이 쿠폰에 한정된 사실이라 검증·색인 없이 브리핑에서만 참고한다
+    usage_note        TEXT,
+
     last_notified_at  TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at      TIMESTAMPTZ,
@@ -79,7 +83,11 @@ COMMENT ON COLUMN coupons.face_value IS
     '액면가·사용가능금액 (원). PRODUCT에도 존재할 수 있다. 인식 실패 시 NULL';
 COMMENT ON COLUMN coupons.barcode_hash IS
     '바코드 숫자 + 앱 고정 salt 의 SHA-256 hex. 중복 판정 전용. 복호화 불가';
- 
+COMMENT ON COLUMN coupons.usage_note IS
+    '이 쿠폰 이미지에 적힌 이용 제한/조건 문구(있으면). 브랜드 전체 정책이 아니라
+     이 쿠폰 한 장에 한정된 사실 — coupon_rules(RAG)와 달리 검증·색인하지 않고
+     이 쿠폰의 브리핑에서만 참고한다.';
+
 CREATE INDEX IF NOT EXISTS idx_coupons_usable
     ON coupons (uid, brand_id)
     WHERE status = 'COMPLETED' AND is_used = false;

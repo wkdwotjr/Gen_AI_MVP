@@ -284,6 +284,7 @@ class CouponData(BaseModel):
     product_name: str | None
     face_value: int | None = None   # 액면가·사용가능금액(원). PRODUCT에도 있을 수 있다
     expires_at: str | None          # KST 달력 날짜 YYYY-MM-DD
+    usage_note: str | None = None   # 이 쿠폰 한 장에 적힌 이용조건. 브랜드 정책 아님(RAG 미색인)
     days_left: int | None           # 서버가 계산 (클라이언트가 계산하지 않는다)
     barcode_masked: str | None      # 원문은 절대 포함하지 않는다
     barcode_format: str | None
@@ -418,7 +419,7 @@ class CouponRecord:
 _COUPON_COLUMNS = """
     coupon_id, uid, client_upload_id, status,
     brand_id, brand_name, coupon_type, product_name, face_value, expires_at,
-    barcode_masked, barcode_format, is_used,
+    usage_note, barcode_masked, barcode_format, is_used,
     confidence, needs_review, error_code, error_message,
     created_at, completed_at
 """
@@ -439,6 +440,7 @@ def _row_to_record(row: Row) -> CouponRecord:
             "expires_at": expires.isoformat() if expires else None,
             # 조회 시점 기준으로 다시 계산한다. 하루가 지나도 카드가 정확해야 한다.
             "days_left": (expires - today_kst()).days if expires else None,
+            "usage_note": m["usage_note"],
             "barcode_masked": m["barcode_masked"],
             "barcode_format": m["barcode_format"],
             "is_used": m["is_used"],
@@ -555,6 +557,7 @@ _SQL_MARK_COMPLETED = text(
         product_name   = :product_name,
         face_value     = :face_value,
         expires_at     = CAST(:expires_at AS date),
+        usage_note     = :usage_note,
         barcode_masked = :barcode_masked,
         barcode_hash   = :barcode_hash,
         barcode_format = :barcode_format,
@@ -588,6 +591,7 @@ def _mark_completed_sync(
         "product_name": data.get("product_name"),
         "face_value": data.get("face_value"),
         "expires_at": data.get("expires_at"),
+        "usage_note": data.get("usage_note"),
         "barcode_masked": data.get("barcode_masked"),
         "barcode_hash": barcode_hash,
         "barcode_format": data.get("barcode_format"),
@@ -673,8 +677,9 @@ _SQL_MATCH = text(
                 'product_name', c.product_name,
                 'face_value',   c.face_value,
                 'expires_at',   c.expires_at,
-                'days_left',    (c.expires_at - (now() AT TIME ZONE 'Asia/Seoul')::date)
-            ) ORDER BY c.expires_at ASC
+                'days_left',    (c.expires_at - (now() AT TIME ZONE 'Asia/Seoul')::date),
+                'usage_note',   c.usage_note
+            ) ORDER BY c.expires_at ASC, c.created_at DESC
         ) AS available_coupons
     FROM stores s
     JOIN coupons c

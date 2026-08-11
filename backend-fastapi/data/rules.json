@@ -71,6 +71,17 @@
       "source_url": null,
       "effective_date": null,
       "verified_by": null
+    },
+    {
+      "rule_id": "rul_megamgc_balance_normal_01",
+      "content": "구매자는 2026년 6월 17일까지 이 선물을 취소할 수 있습니다.",
+      "brand_id": "megamgc",
+      "rule_type": "BALANCE",
+      "store_type": "NORMAL",
+      "source_name": "커피쿠폰_메가.jpg (Gemini 추출 후보 — 사람 검수 전)",
+      "source_url": null,
+      "effective_date": null,
+      "verified_by": null
     }
   ]
 }

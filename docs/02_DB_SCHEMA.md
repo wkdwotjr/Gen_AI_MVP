@@ -1,6 +1,6 @@
 02. 데이터베이스 스키마 (DB Schema)
 
-문서 상태: v0.3 최종 수정: 2026-08-11 (coupon_rules 적재 현황 갱신, 스키마 변경 없음) 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-04 RAG 예외 조건) DBMS: PostgreSQL 15.18 / PostGIS 3.6.0 / pgcrypto 1.3 / pgvector 0.8.5 (Cloud SQL asia-northeast3) 원칙: 4일 스프린트다. 테이블은 3개(+RAG 인덱스 1개)로 고정하고, 정규화보다 조회 한 방에 끝나는 구조를 택한다.
+문서 상태: v0.4 최종 수정: 2026-08-11 (coupons.usage_note 컬럼 추가 — C-23, migrate_20260811.sql) 적용 범위: MVP 1차 (F-01 쿠폰 OCR 파싱, F-02 GPS 기반 매장 매칭, F-04 RAG 예외 조건) DBMS: PostgreSQL 15.18 / PostGIS 3.6.0 / pgcrypto 1.3 / pgvector 0.8.5 (Cloud SQL asia-northeast3) 원칙: 4일 스프린트다. 테이블은 3개(+RAG 인덱스 1개)로 고정하고, 정규화보다 조회 한 방에 끝나는 구조를 택한다.
 
 0. 설계 원칙과 의도적으로 잘라낸 것
 0.1 원칙
@@ -117,6 +117,7 @@ coupon_type	TEXT	NOT NULL DEFAULT 'UNKNOWN', CHECK: PRODUCT/AMOUNT/DISCOUNT/UNKN
 product_name	TEXT	NULL 허용	상품명 (예: 아이스 카페 아메리카노 T). coupon_type='AMOUNT'면 정상적으로 없다
 face_value	INTEGER	CHECK: NULL 또는 > 0	액면가·사용가능금액(원). PRODUCT에도 존재할 수 있다 (상품교환권에 금액이 함께 표기되는 경우가 흔함). 인식 실패 시 NULL
 expires_at	DATE	NULL 허용	KST 달력 날짜. 해당 날짜 23:59:59(KST)까지 유효
+usage_note	TEXT	NULL 허용	이 쿠폰 한 장에 적힌 이용 제한 문구(교환처 제외 매장 등, F-01 파싱 시 함께 추출). **coupon_rules(§8 RAG)와 다르다** — 브랜드 전체 정책이 아니라 이 쿠폰에 한정된 사실이라 검증(verified_by)·색인 없이 그 쿠폰의 브리핑에서만 참고한다 (C-23)
 barcode_masked	TEXT	NULL 허용	마스킹된 바코드. 목록·상세 응답에는 이 값만 나간다
 barcode_hash	TEXT	부분 UNIQUE (아래)	바코드 숫자 + salt의 SHA-256 hex. 중복 등록 판정 전용, 복호화 불가
 barcode_format	TEXT	NULL 허용	CODE128/EAN13/QR/UNKNOWN
@@ -430,6 +431,8 @@ CREATE TABLE IF NOT EXISTS coupons (
 
     image_gcs_paths   TEXT[],
 
+    usage_note        TEXT,        -- 이 쿠폰 한 장에 적힌 이용조건 (C-23, coupon_rules와 별개)
+
     last_notified_at  TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at      TIMESTAMPTZ,
@@ -519,6 +522,7 @@ CREATE INDEX IF NOT EXISTS idx_rules_filter
 
 backend-fastapi/db/init.sql — 위 DDL 전체 (CREATE만, DROP 없음). 신규 환경용.
 backend-fastapi/db/migrate_20260810.sql — 이미 생성된 Cloud SQL에 coupon_type/face_value/barcode_hash/image_gcs_paths/coupon_rules를 ALTER/CREATE로 추가. 적용 완료 (2026-08-10).
+backend-fastapi/db/migrate_20260811.sql — coupons.usage_note 컬럼 추가 (C-23). 적용 완료 (2026-08-11).
 backend-fastapi/db/seed.sql — 시연용 시드 (§9.1)
 backend-fastapi/db/reset.sql — DROP 포함 재실행용 (신설 예정)
 backend-fastapi/db/stores_seed.csv — 431건 매장 시드, scripts/load_store.py가 적재

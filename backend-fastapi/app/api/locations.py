@@ -148,6 +148,11 @@ def template_briefing(match: dict[str, Any]) -> Briefing:
         parts.append(f"사용 가능한 쿠폰 {len(coupons)}장이 있어요.")
     else:
         parts.append(f"'{name}' 쿠폰이 있어요.")
+        # 쿠폰이 한 장일 때만 붙인다 — 여러 장이면 이 문구가 어느 쿠폰
+        # 얘기인지 모호해진다. 브랜드 정책이 아니라 이 쿠폰 한 장에 적힌
+        # 조건이므로 "이 쿠폰은"으로 한정한다 (usage_note는 RAG 미색인).
+        if head.get("usage_note"):
+            parts.append(f"이 쿠폰은 {head['usage_note']}")
     if isinstance(days, int) and days <= 7:
         parts.append(f"만료까지 {days}일 남았습니다.")
 
