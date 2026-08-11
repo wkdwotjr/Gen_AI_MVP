@@ -117,12 +117,13 @@ L6 INVALID_COORDINATE / L9 TOO_MANY_POINTS / L10 VALIDATION_ERROR
 배포 후 재검증 체크리스트 (D-1~D-6, 제출문서 SECTION 12·13에 그대로 옮길 것) — 2026-08-11 전부 통과
 
 ID	항목	절차	통과 기준	결과
-D-1	헬스 체크	Invoke-RestMethod <URL>/health	status=ok, db=ok (db=error면 유닉스 소켓/Secret 문제)	PASS (deploy.ps1 자체 검증)
-D-2	정적 페이지	브라우저로 <URL>/	업로드 폼 + 지도 컨테이너 렌더	PASS (200, 33.5KB)
-D-3	카카오맵	같은 화면	지도 타일 표시. 안 뜨면 도메인 등록 누락(콘솔 F12로 확인)	PASS (사용자 확인)
-D-4	비동기 파싱	쿠폰 2장 업로드 → 폴링	15초 내 COMPLETED. PROCESSING 고착 시 --no-cpu-throttling 미적용	PASS (사용자 확인)
-D-5	위치 매칭	아주대 37.2803, 127.0433	스타벅스 아주대점(143m) + 메가엠지씨커피 아주대점(207m), 거리순	PASS
-D-6	비밀값 비노출	gcloud run services describe <SVC> --region ... --format yaml	출력에 DB 비밀번호 평문 없음(secretKeyRef만 보임)	PASS
+D-1	헬스 체크	Invoke-RestMethod <URL>/health	status=ok, db=ok (db=error면 유닉스 소켓/Secret 문제)	PASS (재배포 20260811-161601, deploy.ps1 자체 검증)
+D-2	정적 페이지	브라우저로 <URL>/	업로드 폼 + 지도 컨테이너 렌더	PASS (200, 36.7KB — 재배포 후 재확인 2026-08-11)
+D-3	카카오맵	같은 화면	지도 타일 표시. 안 뜨면 도메인 등록 누락(콘솔 F12로 확인)	`[확인 필요: 재배포 후 브라우저 재확인 필요, 코드 변경 없어 회귀 가능성 낮음]`
+D-4	비동기 파싱	쿠폰 업로드 → 폴링	15초 내 COMPLETED. PROCESSING 고착 시 --no-cpu-throttling 미적용	PASS — 재배포 후 curl로 재검증(2026-08-11), 6초 만에 COMPLETED
+D-5	위치 매칭	아주대 37.2803, 127.0433	스타벅스 아주대점(143m) + 메가엠지씨커피 아주대점(207m), 거리순	PASS — 재배포 후 재검증, briefing.generated_by="GEMINI"까지 확인(2026-08-11)
+D-6	비밀값 비노출	gcloud run services describe <SVC> --region ... --format yaml	출력에 DB 비밀번호 평문 없음(secretKeyRef만 보임)	PASS (재배포 후 재확인 2026-08-11)
+D-7	F-03/F-04 배포 반영 (신규)	POST /rules/search(starbucks, DEPARTMENT_STORE) + POST /locations(아주대)	rules 검색 성공 + briefing.generated_by="GEMINI"	PASS (2026-08-11, 유사도 0.74 / 브리핑 정상 생성 확인)
 
 D-3 주의: 브라우저 Geolocation API는 HTTPS 또는 localhost에서만 동작한다. Cloud Run은 HTTPS라 문제없지만, 배포 URL을 http://로 열면 위치 권한 요청 자체가 뜨지 않는다.
 시연 전 정리 (5분)
@@ -135,12 +136,14 @@ DELETE FROM coupons WHERE coupon_id IN (
   'cpn_01KZN78N7NDBP3469BRWG4ZF2F',
   'cpn_01KZNVFZ2H6VSHSFQHVPQ60ZVE'
 );
--- usage_note(C-23) 검증용으로 업로드한 테스트 쿠폰 2건 (2026-08-11).
+-- usage_note(C-23) 검증용 테스트 쿠폰 2건 + NOT_A_COUPON 동작 확인용 1건 (2026-08-11).
 -- 메가커피는 브랜드 없이 재업로드된 중복, 이마트는 brand_id가 없어(미지원 브랜드)
--- 어차피 매칭에 안 걸리지만 목록엔 보인다
+-- 어차피 매칭에 안 걸리지만 목록엔 보인다. NOT_A_COUPON 건은 제출 문서에 실측
+-- 증거로 이미 기록해뒀으니(submission_draft.md §8.1) DB에는 안 남겨도 된다
 DELETE FROM coupons WHERE coupon_id IN (
   'cpn_01KZQP4E2PXCE1WNNTJJS43D41',
-  'cpn_01KZQPBTFHE68JHD6ZF2J7W1T3'
+  'cpn_01KZQPBTFHE68JHD6ZF2J7W1T3',
+  'cpn_01KZQT3FC0EH5Y95V094QPYYWX'
 );
 결정 이력 (제출문서 11.1에 그대로 옮길 것)
 #	변경	이유
