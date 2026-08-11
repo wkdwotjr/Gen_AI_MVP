@@ -157,7 +157,7 @@ def template_briefing(match: dict[str, Any]) -> Briefing:
         parts.append(f"만료까지 {days}일 남았습니다.")
 
     text = " ".join(parts)
-    return Briefing(text=text[:100], generated_by="TEMPLATE", rules=[])
+    return Briefing(text=gemini.truncate_briefing(text), generated_by="TEMPLATE", rules=[])
 
 
 # ══════════════════════════════════════════════════════════════════

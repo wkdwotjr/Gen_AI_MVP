@@ -587,7 +587,8 @@ async def embed_text(text: str, *, is_query: bool) -> list[float]:
 BRIEFING_SYSTEM_INSTRUCTION = """당신은 쿠폰콕 앱이 사용자 근처 매장을 안내할 때 보여줄
 한국어 브리핑 문장을 만든다. 다음을 반드시 지킨다.
 
-1. 100자 이내 한두 문장으로 쓴다. 존댓말을 쓰되 광고 문구처럼 딱딱하지 않게 쓴다.
+1. 90자 이내 한두 문장으로 쓴다(하드 한도는 100자지만 여유를 두고 90자를
+   목표로 한다). 존댓말을 쓰되 광고 문구처럼 딱딱하지 않게 쓴다.
 2. 입력으로 주어진 사실(매장명, 거리, 보유 쿠폰, 쿠폰별 usage_note, 확인된 규칙)만
    사용한다. 주어지지 않은 정보(가격, 다른 매장, 재고, 할인율 등)를 지어내지 않는다.
 3. "확인된 규칙"이 비어 있고 해당 쿠폰의 usage_note도 없으면, 이 매장에서 쿠폰을
@@ -603,7 +604,30 @@ BRIEFING_SYSTEM_INSTRUCTION = """당신은 쿠폰콕 앱이 사용자 근처 매
    "이 쿠폰에는" 처럼 해당 쿠폰에 한정해서 말하고, 같은 브랜드의 다른 쿠폰에도
    똑같이 적용된다고 일반화하지 않는다. (예: "이 쿠폰은 안양점에서 사용할 수
    없다고 적혀 있어요" O / "이 브랜드는 안양점에서 사용할 수 없어요" X)
-7. 문장만 출력한다. 설명, 마크다운, 따옴표를 붙이지 않는다."""
+7. 문장만 출력한다. 설명, 마크다운, 따옴표를 붙이지 않는다.
+8. 근거 규칙의 content는 원문을 그대로 옮기지 않는다. "~일부 매장은 제한될 수
+   있어요"처럼 핵심만 한 구절로 압축한다. 원문을 그대로 인용하면 그것만으로
+   글자 수 한도를 넘기기 쉽다. 매장명·거리·쿠폰 정보를 규칙 요약보다 우선한다
+   — 공간이 부족하면 규칙 요약을 더 줄인다."""
+
+
+def truncate_briefing(text: str, limit: int = 100) -> str:
+    """limit 이내면 그대로 반환한다. 넘으면 단어 중간이 아니라 마지막 문장부호나
+    공백에서 자른다 — 프롬프트 지침(BRIEFING_SYSTEM_INSTRUCTION 1·8번)이 90자
+    목표로 여유를 두므로, 여기서 실제로 자르는 것은 모델이 그 지침을 못 지킨
+    극단적 경우에 대한 최후 방어선이다."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    for end in ("다.", "요.", "죠.", "!", "?"):
+        idx = cut.rfind(end)
+        if idx >= limit * 0.5:
+            return cut[: idx + len(end)]
+    idx = cut.rfind(" ")
+    if idx >= limit * 0.5:
+        return cut[:idx].rstrip() + "…"
+    return cut.rstrip() + "…"
 
 
 def _briefing_context(match: dict, rules: list[dict]) -> str:
@@ -672,4 +696,4 @@ async def generate_briefing_text(match: dict, rules: list[dict]) -> str:
         raise
     except Exception as exc:
         raise GeminiUnavailable(str(exc)) from exc
-    return text[:100]
+    return truncate_briefing(text)
